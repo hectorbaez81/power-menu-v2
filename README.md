@@ -1,51 +1,48 @@
 # Power Menu V2
 
-A Ryoku shell plugin (`power-menu-v2`). This scaffold is a working demo: a counter that
-ticks once a second, a mark on the bar, and a panel with a RESET button. Edit it
-into your own widget.
+A Ryoku bar plugin (`power-menu-v2`): a profile-style power menu. The panel shows
+your avatar and name from the Hub's Profile page, the installed Ryoku version, the
+hostname and uptime, a Settings button, and the six session actions in one group.
+Every colour comes from the plugin kit `Theme`, so it follows the Ryoku theme and
+wallpaper.
 
-## What it does
+## What runs
 
-- **Service** (`service/Main.qml`): the logic, no UI. Holds the live state the
-  views read through `pluginApi.mainInstance`.
-- **Widget** (`content/Widget.qml`): the one view the host mounts. A left click
-  toggles the panel; it never changes state.
-- **Panel** (`content/Panel.qml`): the bar panel the host renders under the
-  glyph when this plugin is on the bar.
+| Action    | Command                                             |
+| --------- | --------------------------------------------------- |
+| Lock      | `ryoku-shell lock`                                  |
+| Log out   | `hyprctl dispatch hl.dsp.exit()`                    |
+| Suspend   | `ryoku-shell suspend`                               |
+| Hibernate | `bin/hibernate.sh` (locks, confirms the lock via `journalctl`, then `systemctl hibernate`; `notify-send` if the lock isn't confirmed) |
+| Reboot    | `systemctl reboot`                                  |
+| Power off | `systemctl poweroff`                                |
+| Settings  | `ryoku-shell hub open`                              |
+
+When the panel opens it also runs three read-only queries: `pacman -Q ryoku`
+(version badge), `uname -n` (hostname) and `cat /proc/uptime` (uptime).
+
+With "Ask before acting" on, every action except Lock needs a second click within
+four seconds. The bar glyph only opens the panel; it never runs anything.
 
 ## What it reads and writes
 
-The demo reads nothing off the machine and writes nothing. When you add real
-behaviour, keep to the rules in `AGENTS.md`: read settings through
-`pluginApi.pluginSettings` behind a default, write them only through
-`pluginApi.saveSetting(key, value)`, and write files only under
-`pluginApi.stateDir`. Every external command belongs in `bin/` or in
-`dependencies.commands`; every host you contact belongs in
-`capabilities.network`; a privileged action runs only through `pkexec` listed in
-`capabilities.privileged`.
+Reads `~/.config/ryoku/profile.json` (`text.name` and the `hero` settings) and the
+image that file points at: the Hub's bundled `profile-hero.png` (default),
+a file in `~/Pictures/ryodecors/` (gallery) or the custom path. It writes nothing.
 
 ## Settings
 
-| key       | type   | default | description         |
-| --------- | ------ | ------- | ------------------- |
-| showCount | toggle | true    | Show the tick count |
+| key            | type   | default | description                    |
+| -------------- | ------ | ------- | ------------------------------ |
+| confirm        | toggle | true    | Ask before acting (click twice) |
+| show_lock      | toggle | true    | Show Lock                      |
+| show_logout    | toggle | true    | Show Log out                   |
+| show_suspend   | toggle | true    | Show Suspend                   |
+| show_hibernate | toggle | true    | Show Hibernate                 |
+| show_reboot    | toggle | true    | Show Reboot                    |
+| show_poweroff  | toggle | true    | Show Power off                 |
 
 ## Preview
 
-Capture a real screenshot of the widget and save it as
-`assets/preview-widget.png`, then list it under `files` in `manifest.json`. The
-store shows it in the catalogue.
-
-## Build, check, install
-
-```
-ryoku plugin validate .
-ryoku plugin add . --bar --yes
-```
-
-It lists under **Community** in QS Bar Settings. Publish it only when you want
-to share it: `ryoku plugin share power-menu-v2`.
-
-## Author
-
-hectorbaez81 <hector.baez@gmail.com>: this plugin is community-made (`official` is false).
+Capture the widget as `assets/preview-widget.png` and list it under `files` in
+`manifest.json`.
