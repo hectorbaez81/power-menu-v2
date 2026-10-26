@@ -16,8 +16,11 @@ import Quickshell.Io
 //   log out             session.logout on the ryoku-shell daemon socket, the
 //                       same call the shell's own session menu makes
 //   reboot, power off   ryoku-host power reboot / poweroff
-//   hibernate           ryoku-shell lock, then ryoku-host power hibernate
-//                       (inhibitors respected; hidden unless login1 says yes)
+//   hibernate           ryoku-shell lock, wait until login1 reports CanHibernate
+//                       "yes" (the shell lifts its own sleep block once the lock
+//                       is secure), then ryoku-host power hibernate. Inhibitors
+//                       are respected: if something else still blocks sleep,
+//                       it gives up and the session simply stays locked.
 Item {
     id: svc
 
@@ -48,9 +51,13 @@ Item {
         return on;
     }
 
-    // Hibernate is offered only when login1 reports the machine can do it.
+    // Hibernate is offered when login1 reports it possible. While the session is
+    // unlocked the Ryoku shell holds a sleep block (released once the lock
+    // screen is secure), so "inhibited" is the normal answer here and counts as
+    // available; "na", "no" and "challenge" hide the row.
     property string hibernateCapability: ""
     readonly property bool canHibernate: svc.hibernateCapability === "yes"
+        || svc.hibernateCapability === "inhibited"
 
     function parseLogin1Capability(text) {
         var trimmed = String(text || "").trim();
@@ -79,7 +86,8 @@ Item {
             if (!svc.canHibernate)
                 return;
             Quickshell.execDetached(["ryoku-shell", "lock"]);
-            hibernateDelay.restart();
+            svc.hibernateTries = 0;
+            hibernateWait.restart();
             break;
         }
     }
@@ -123,11 +131,37 @@ Item {
         }
     }
 
-    // Give the lock a moment to cover the screen before hibernating.
+    // After locking, poll login1 until nothing blocks sleep (the shell drops its
+    // block once the lock is secure), then hibernate. ~12 s cap, the shell's own
+    // lock budget; past it, give up rather than override an inhibitor.
+    property int hibernateTries: 0
     Timer {
-        id: hibernateDelay
-        interval: 900
-        onTriggered: Quickshell.execDetached(["ryoku-host", "power", "hibernate"])
+        id: hibernateWait
+        interval: 300
+        repeat: true
+        onTriggered: {
+            if (svc.hibernateTries >= 40) {
+                hibernateWait.stop();
+                return;
+            }
+            svc.hibernateTries += 1;
+            if (!hibernateCheck.running)
+                hibernateCheck.running = true;
+        }
+    }
+
+    Process {
+        id: hibernateCheck
+        command: ["busctl", "--system", "call", "org.freedesktop.login1",
+                  "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "CanHibernate"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (hibernateWait.running && svc.parseLogin1Capability(text) === "yes") {
+                    hibernateWait.stop();
+                    Quickshell.execDetached(["ryoku-host", "power", "hibernate"]);
+                }
+            }
+        }
     }
 
     // The ryoku-shell daemon socket: session.logout is registered there and is
@@ -156,7 +190,9 @@ Item {
         onConnectionStateChanged: if (connected) flushQueued()
     }
 
+    // Capability probe for showing the row: at load and on every panel open.
     Process {
+        id: hibernateProbe
         command: ["busctl", "--system", "call", "org.freedesktop.login1",
                   "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "CanHibernate"]
         running: true
@@ -188,17 +224,28 @@ Item {
     readonly property string name: svc.displayName !== "" ? svc.displayName : svc.userName
 
     // Same source rules as the Hub's Profile page (hero.kind).
+    // Same sources as the Hub's Profile page: gallery art in <Pictures>/ryodecors
+    // (localized, e.g. ~/Imágenes), a custom image copied into
+    // <config>/ryoku/profile/, otherwise the bundled bust.
+    readonly property string heroFile: svc.heroSource.split("/").pop()
     readonly property string avatarPath: {
         if (svc.heroKind === "gallery")
-            return svc.heroSource !== "" ? svc.home + "/Pictures/ryodecors/" + svc.heroSource : "";
-        if (svc.heroKind === "custom") {
-            if (svc.heroSource.indexOf("~/") === 0)
-                return svc.home + svc.heroSource.slice(1);
-            if (svc.heroSource.indexOf("/") === 0)
-                return svc.heroSource;
-            return "";
-        }
+            return svc.heroFile !== "" ? svc.picturesDir + "/ryodecors/" + svc.heroFile : "";
+        if (svc.heroKind === "custom")
+            return svc.heroFile !== "" ? svc.configHome + "/ryoku/profile/" + svc.heroFile : "";
         return svc.configHome + "/quickshell/hub/art/profile-hero.png";
+    }
+
+    // XDG Pictures folder from ~/.config/user-dirs.dirs, as the Hub resolves it.
+    property string picturesDir: svc.home + "/Pictures"
+
+    function parseUserDirs(raw) {
+        var m = String(raw || "").match(/^XDG_PICTURES_DIR="([^"]*)"/m);
+        if (!m)
+            return;
+        var dir = m[1].replace(/^\$HOME/, svc.home);
+        if (dir.indexOf("/") === 0)
+            svc.picturesDir = dir.replace(/\/+$/, "");
     }
 
     readonly property string subtitle: {
@@ -258,6 +305,8 @@ Item {
 
     // Called when the panel opens; cheap, one-shot reads.
     function refresh() {
+        if (!hibernateProbe.running)
+            hibernateProbe.running = true;
         profileFile.reload();
         if (svc.version === "" && !versionProc.running)
             versionProc.running = true;
@@ -265,6 +314,12 @@ Item {
             hostProc.running = true;
         if (!uptimeProc.running)
             uptimeProc.running = true;
+    }
+
+    FileView {
+        id: userDirsFile
+        path: svc.configHome + "/user-dirs.dirs"
+        onLoaded: svc.parseUserDirs(text())
     }
 
     FileView {

@@ -12,7 +12,8 @@ version and uptime, a Settings button, and the six session actions.
 - **Panel** — avatar and name from the Hub's Profile page, a Ryoku version
   badge, `@hostname · up …`, a Settings button that opens the Hub, then Lock,
   Log out, Suspend, Hibernate, Reboot and Power off in one group. Hibernate is
-  shown only when login1 reports the machine can hibernate. With "Ask before
+  shown when login1 reports it possible (`yes`, or `inhibited` by the shell's
+  own sleep block, which lifts once the screen is locked). With "Ask before
   acting" on, every action except Lock needs a second click within four
   seconds; closing the panel always drops an armed action. Every colour comes
   from the plugin kit `Theme`, so it follows the Ryoku theme and wallpaper.
@@ -46,22 +47,25 @@ it under **QS Bar Settings → Community**.
 
 | Command | When |
 | --- | --- |
-| `ryoku-shell lock` | Lock click, or immediately before hibernating |
+| `ryoku-shell lock` | Lock click, or first step of a confirmed Hibernate |
 | `ryoku-shell suspend` | Confirmed Suspend (the shell locks first) |
 | `call session.logout {}` on `$XDG_RUNTIME_DIR/ryoku-shell.sock` | Confirmed Log out (the same call the shell's own session menu makes) |
 | `ryoku-host power reboot` | Confirmed Reboot |
 | `ryoku-host power poweroff` | Confirmed Power off |
-| `ryoku-host power hibernate` | 900 ms after locking, from a confirmed Hibernate; inhibitors are respected |
+| `ryoku-host power hibernate` | Confirmed Hibernate, once login1 reports `CanHibernate` = `yes` after locking (polled every 300 ms, up to about 12 s). Inhibitors are respected: if another app still blocks sleep, it gives up and the session stays locked |
 | `ryoku-shell hub open` | Settings button |
-| `busctl --system call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager CanHibernate` | Once when the service loads |
+| `busctl --system call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager CanHibernate` | When the service loads and when the panel opens (to show the row), and while waiting to hibernate |
 | `ryoku-host pkg version ryoku` | When the panel opens (version badge) |
 | `uname -n`, `cat /proc/uptime` | When the panel opens (hostname, uptime) |
 
 ### What it reads
 
 `~/.config/ryoku/profile.json` (`text.name` and the `hero` settings) and the
-image it points at: the Hub's bundled `profile-hero.png`, a file in
-`~/Pictures/ryodecors/`, or the custom path.
+image it points at, the same way the Hub's Profile page does: the bundled
+`profile-hero.png`, a gallery image in `<Pictures>/ryodecors/`, or a custom
+image in `~/.config/ryoku/profile/`. The Pictures folder comes from
+`~/.config/user-dirs.dirs`, so a localized folder such as `~/Imágenes` works.
+With no `profile.json`, the name falls back to your login name, as in the Hub.
 
 ### What it never does
 
