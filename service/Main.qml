@@ -5,10 +5,19 @@ import Quickshell
 import Quickshell.Io
 
 // Logic only. Holds the six session actions with the arm-then-confirm flow and
-// the per-action visibility settings (same behavior as power-menu V1), plus the
-// read-only profile data the panel shows: name and hero image from the Hub's
-// ~/.config/ryoku/profile.json, the installed Ryoku version, the hostname and
-// the uptime. Nothing here writes anywhere.
+// the per-action visibility settings, plus the read-only profile data the panel
+// shows: name and hero image from the Hub's ~/.config/ryoku/profile.json, the
+// installed Ryoku version, the hostname and the uptime. Nothing here writes
+// anywhere.
+//
+// Every action goes through Ryoku's own seams, never a compositor or init tool,
+// so it works on every edition and window manager:
+//   lock, suspend       ryoku-shell lock / suspend (fail-closed lock first)
+//   log out             session.logout on the ryoku-shell daemon socket, the
+//                       same call the shell's own session menu makes
+//   reboot, power off   ryoku-host power reboot / poweroff
+//   hibernate           ryoku-shell lock, then ryoku-host power hibernate
+//                       (inhibitors respected; hidden unless login1 says yes)
 Item {
     id: svc
 
@@ -33,19 +42,46 @@ Item {
 
     function enabled(id) {
         var key = "show_" + id;
-        return settings && settings[key] !== undefined ? settings[key] : true;
+        var on = settings && settings[key] !== undefined ? settings[key] : true;
+        if (id === "hibernate")
+            return on && svc.canHibernate;
+        return on;
     }
 
-    function argvFor(id) {
+    // Hibernate is offered only when login1 reports the machine can do it.
+    property string hibernateCapability: ""
+    readonly property bool canHibernate: svc.hibernateCapability === "yes"
+
+    function parseLogin1Capability(text) {
+        var trimmed = String(text || "").trim();
+        var match = trimmed.match(/^s\s+"([^"]+)"$/);
+        return (match ? match[1] : trimmed).toLowerCase();
+    }
+
+    function execute(id) {
         switch (id) {
-        case "logout":    return ["hyprctl", "dispatch", "hl.dsp.exit()"];
-        case "lock":      return ["ryoku-shell", "lock"];
-        case "suspend":   return ["ryoku-shell", "suspend"];
-        case "hibernate": return [svc.pluginApi.pluginDir + "/bin/hibernate.sh"];
-        case "reboot":    return ["systemctl", "reboot"];
-        case "poweroff":  return ["systemctl", "poweroff"];
+        case "lock":
+            Quickshell.execDetached(["ryoku-shell", "lock"]);
+            break;
+        case "suspend":
+            Quickshell.execDetached(["ryoku-shell", "suspend"]);
+            break;
+        case "logout":
+            shellCtl.call("session.logout");
+            break;
+        case "reboot":
+            Quickshell.execDetached(["ryoku-host", "power", "reboot"]);
+            break;
+        case "poweroff":
+            Quickshell.execDetached(["ryoku-host", "power", "poweroff"]);
+            break;
+        case "hibernate":
+            if (!svc.canHibernate)
+                return;
+            Quickshell.execDetached(["ryoku-shell", "lock"]);
+            hibernateDelay.restart();
+            break;
         }
-        return [];
     }
 
     function run(id) {
@@ -61,9 +97,7 @@ Item {
         }
         svc.armed = "";
         disarm.stop();
-        var argv = svc.argvFor(id);
-        if (argv.length > 0)
-            Quickshell.execDetached(argv);
+        svc.execute(id);
         if (svc.pluginApi)
             svc.pluginApi.closePanel();
     }
@@ -78,6 +112,61 @@ Item {
         id: disarm
         interval: 4000
         onTriggered: svc.armed = ""
+    }
+
+    // An armed action never survives the panel closing.
+    readonly property bool panelOpen: pluginApi ? pluginApi.panelOpen === true : false
+    onPanelOpenChanged: {
+        if (!svc.panelOpen) {
+            svc.armed = "";
+            disarm.stop();
+        }
+    }
+
+    // Give the lock a moment to cover the screen before hibernating.
+    Timer {
+        id: hibernateDelay
+        interval: 900
+        onTriggered: Quickshell.execDetached(["ryoku-host", "power", "hibernate"])
+    }
+
+    // The ryoku-shell daemon socket: session.logout is registered there and is
+    // compositor-neutral (Hyprland, niri, ...).
+    Socket {
+        id: shellCtl
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/ryoku-shell.sock"
+        property string queued: ""
+
+        function call(method) {
+            shellCtl.queued += "call " + method + " {}\n";
+            if (shellCtl.connected)
+                shellCtl.flushQueued();
+            else
+                shellCtl.connected = true;
+        }
+
+        function flushQueued() {
+            if (shellCtl.queued.length === 0)
+                return;
+            write(shellCtl.queued);
+            flush();
+            shellCtl.queued = "";
+        }
+
+        onConnectionStateChanged: if (connected) flushQueued()
+    }
+
+    Process {
+        command: ["busctl", "--system", "call", "org.freedesktop.login1",
+                  "/org/freedesktop/login1", "org.freedesktop.login1.Manager", "CanHibernate"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var capability = svc.parseLogin1Capability(text);
+                if (capability.length > 0)
+                    svc.hibernateCapability = capability;
+            }
+        }
     }
 
     // ── profile data (read-only) ─────────────────────────────────────────────
@@ -152,15 +241,17 @@ Item {
         svc.zoom = Math.max(1, svc.num(hero.zoom, 1));
     }
 
-    // "ryoku 0.75.3.r3968.gcfd8899-1" -> "0.75.3"
+    // ryoku-host pkg version ryoku: "1.0.5.r5521.ge344edb-1" -> "1.0.5"
+    // (also accepts "ryoku 1.0.5..." in case a host prints the name first)
     function parseVersion(raw) {
         var fields = String(raw || "").trim().split(/\s+/);
-        if (fields.length < 2) {
+        var token = fields.length > 1 ? fields[1] : fields[0];
+        var m = String(token || "").match(/^\d+(\.\d+)*/);
+        if (!m) {
             svc.version = "";
             return;
         }
-        var m = fields[1].match(/^\d+(\.\d+)*/);
-        var v = m ? m[0] : fields[1];
+        var v = m[0];
         var parts = v.split(".");
         svc.version = parts.length > 3 ? parts.slice(0, 3).join(".") : v;
     }
@@ -187,7 +278,7 @@ Item {
 
     Process {
         id: versionProc
-        command: ["pacman", "-Q", "ryoku"]
+        command: ["ryoku-host", "pkg", "version", "ryoku"]
         stdout: StdioCollector {
             onStreamFinished: svc.parseVersion(text)
         }

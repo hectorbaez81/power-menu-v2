@@ -1,11 +1,16 @@
 {
   "id": "power-menu-v2",
   "name": "Power Menu V2",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "hectorbaez81 <hector.baez@gmail.com>",
-  "description": "Profile-style power menu: avatar, Ryoku version and uptime, plus lock, log out, suspend, hibernate, reboot and power off. Follows the Ryoku theme.",
+  "description": "Profile-style session menu on the QS Bar: avatar, Ryoku version and uptime, plus lock, log out, suspend, hibernate, reboot and power off through Ryoku's session commands.",
   "license": "MIT",
   "official": false,
+  "tags": [
+    "session",
+    "power",
+    "bar-widget"
+  ],
   "hosts": [
     "topbarGlyph"
   ],
@@ -18,7 +23,7 @@
     "width": 280
   },
   "files": [
-    "bin/hibernate.sh"
+    "assets/preview-widget.png"
   ],
   "capabilities": {
     "densities": [
@@ -28,16 +33,14 @@
   },
   "defaults": {
     "host": "topbarGlyph",
+    "icon": "power_settings_new",
     "label": "Power Menu V2"
   },
   "dependencies": {
     "commands": [
       "ryoku-shell",
-      "systemctl",
-      "hyprctl",
-      "journalctl",
-      "notify-send",
-      "pacman",
+      "ryoku-host",
+      "busctl",
       "uname",
       "cat"
     ]

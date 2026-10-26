@@ -1,48 +1,107 @@
 # Power Menu V2
 
-A Ryoku bar plugin (`power-menu-v2`): a profile-style power menu. The panel shows
-your avatar and name from the Hub's Profile page, the installed Ryoku version, the
-hostname and uptime, a Settings button, and the six session actions in one group.
-Every colour comes from the plugin kit `Theme`, so it follows the Ryoku theme and
-wallpaper.
+A profile-style session menu on the QS Bar: your Hub avatar and name, the Ryoku
+version and uptime, a Settings button, and the six session actions.
 
-## What runs
+![Power Menu V2 open on the QS Bar](assets/preview-widget.png)
 
-| Action    | Command                                             |
-| --------- | --------------------------------------------------- |
-| Lock      | `ryoku-shell lock`                                  |
-| Log out   | `hyprctl dispatch hl.dsp.exit()`                    |
-| Suspend   | `ryoku-shell suspend`                               |
-| Hibernate | `bin/hibernate.sh` (locks, confirms the lock via `journalctl`, then `systemctl hibernate`; `notify-send` if the lock isn't confirmed) |
-| Reboot    | `systemctl reboot`                                  |
-| Power off | `systemctl poweroff`                                |
-| Settings  | `ryoku-shell hub open`                              |
+## What it does
 
-When the panel opens it also runs three read-only queries: `pacman -Q ryoku`
-(version badge), `uname -n` (hostname) and `cat /proc/uptime` (uptime).
+- **Widget** — a power glyph on the QS Bar. A click only opens the panel; the
+  glyph never runs an action by itself.
+- **Panel** — avatar and name from the Hub's Profile page, a Ryoku version
+  badge, `@hostname · up …`, a Settings button that opens the Hub, then Lock,
+  Log out, Suspend, Hibernate, Reboot and Power off in one group. Hibernate is
+  shown only when login1 reports the machine can hibernate. With "Ask before
+  acting" on, every action except Lock needs a second click within four
+  seconds; closing the panel always drops an armed action. Every colour comes
+  from the plugin kit `Theme`, so it follows the Ryoku theme and wallpaper.
+- **Service** — runs the actions through Ryoku's own session commands and reads
+  the profile data. Nothing is compositor- or edition-specific: no `hyprctl`,
+  `systemctl`, `journalctl` or package-manager calls.
 
-With "Ask before acting" on, every action except Lock needs a second click within
-four seconds. The bar glyph only opens the panel; it never runs anything.
+## Install
 
-## What it reads and writes
+From this folder on a Ryoku desktop:
 
-Reads `~/.config/ryoku/profile.json` (`text.name` and the `hero` settings) and the
-image that file points at: the Hub's bundled `profile-hero.png` (default),
-a file in `~/Pictures/ryodecors/` (gallery) or the custom path. It writes nothing.
+```
+ryoku plugin validate .
+ryoku plugin add . --bar --yes
+```
+
+Or install from **Ryostore → Plugins** once it is listed, then enable and place
+it under **QS Bar Settings → Community**.
+
+## How it plugs in
+
+- `service/Main.qml` — session actions, the confirm flow, the login1 hibernate
+  probe and the read-only profile data.
+- `content/Widget.qml` — the bar glyph; a click calls `pluginApi.togglePanel()`.
+- `content/Panel.qml` — the profile block and action group; rows call the
+  service, which closes the panel after running an action.
+
+`hosts` is `topbarGlyph` only.
+
+### What it runs
+
+| Command | When |
+| --- | --- |
+| `ryoku-shell lock` | Lock click, or immediately before hibernating |
+| `ryoku-shell suspend` | Confirmed Suspend (the shell locks first) |
+| `call session.logout {}` on `$XDG_RUNTIME_DIR/ryoku-shell.sock` | Confirmed Log out (the same call the shell's own session menu makes) |
+| `ryoku-host power reboot` | Confirmed Reboot |
+| `ryoku-host power poweroff` | Confirmed Power off |
+| `ryoku-host power hibernate` | 900 ms after locking, from a confirmed Hibernate; inhibitors are respected |
+| `ryoku-shell hub open` | Settings button |
+| `busctl --system call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager CanHibernate` | Once when the service loads |
+| `ryoku-host pkg version ryoku` | When the panel opens (version badge) |
+| `uname -n`, `cat /proc/uptime` | When the panel opens (hostname, uptime) |
+
+### What it reads
+
+`~/.config/ryoku/profile.json` (`text.name` and the `hero` settings) and the
+image it points at: the Hub's bundled `profile-hero.png`, a file in
+`~/Pictures/ryodecors/`, or the custom path.
+
+### What it never does
+
+- No network access.
+- No privileged escalation (`pkexec` / `sudo` / `doas` / `su`).
+- No writes anywhere.
+- No compositor-specific tools.
 
 ## Settings
 
-| key            | type   | default | description                    |
-| -------------- | ------ | ------- | ------------------------------ |
-| confirm        | toggle | true    | Ask before acting (click twice) |
-| show_lock      | toggle | true    | Show Lock                      |
-| show_logout    | toggle | true    | Show Log out                   |
-| show_suspend   | toggle | true    | Show Suspend                   |
-| show_hibernate | toggle | true    | Show Hibernate                 |
-| show_reboot    | toggle | true    | Show Reboot                    |
-| show_poweroff  | toggle | true    | Show Power off                 |
+| key | type | default | description |
+| --- | --- | --- | --- |
+| confirm | toggle | true | Ask before acting (click twice) |
+| show_lock | toggle | true | Show Lock |
+| show_logout | toggle | true | Show Log out |
+| show_suspend | toggle | true | Show Suspend |
+| show_hibernate | toggle | true | Show Hibernate (still hidden if the machine can't hibernate) |
+| show_reboot | toggle | true | Show Reboot |
+| show_poweroff | toggle | true | Show Power off |
 
-## Preview
+## Develop
 
-Capture the widget as `assets/preview-widget.png` and list it under `files` in
-`manifest.json`.
+```
+power-menu-v2/
+  manifest.json             # id, version, hosts, entry points, files
+  service/Main.qml          # session actions and profile data
+  content/Widget.qml        # bar glyph
+  content/Panel.qml         # profile block and action group
+  assets/preview-widget.png # README / Store preview
+  LICENSE                   # MIT
+```
+
+## Source
+
+[https://github.com/hectorbaez81/power-menu-v2](https://github.com/hectorbaez81/power-menu-v2)
+
+## Maintenance & safety
+
+A community contribution, maintained by its author, not the Ryoku team.
+
+## Credits
+
+Héctor Báez \<hector.baez@gmail.com\>. MIT licensed. See [LICENSE](LICENSE).
